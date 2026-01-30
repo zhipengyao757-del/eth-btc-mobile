@@ -3,153 +3,110 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETH/BTC套利监控</title>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<title>ETH/BTC 套利监控</title>
 
 <style>
 body{
-    margin:0;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto;
+    font-family: Arial, sans-serif;
     background:#0b0f1a;
-    color:white;
-}
-
-.container{
-    padding:16px;
+    color:#fff;
+    text-align:center;
+    padding:30px;
 }
 
 .card{
-    background:#121826;
-    border-radius:16px;
-    padding:16px;
-    margin-bottom:14px;
-    box-shadow:0 4px 20px rgba(0,0,0,0.3);
+    background:#151a2b;
+    border-radius:12px;
+    padding:20px;
+    margin:15px auto;
+    width:320px;
+    box-shadow:0 0 20px rgba(0,0,0,0.4);
 }
 
-.title{
-    font-size:14px;
-    opacity:0.7;
+.value{
+    font-size:28px;
+    font-weight:bold;
+    margin-top:10px;
 }
 
-.big{
-    font-size:36px;
-    font-weight:700;
-    margin-top:6px;
-}
+.good{ color:#00ff9d; }
+.bad{ color:#ff4d6d; }
 
-.signal{
-    font-size:20px;
-    font-weight:600;
-    margin-top:6px;
-}
-
-.good{ color:#22c55e; }
-.bad{ color:#ef4444; }
-.neutral{ color:#facc15; }
-
-canvas{
-    width:100%;
-    height:240px;
+h1{
+    margin-bottom:20px;
 }
 </style>
-</head>
 
+</head>
 <body>
 
-<div class="container">
+<h1>ETH / BTC 套利监控</h1>
 
 <div class="card">
-<div class="title">ETH-BTC 24h差值</div>
-<div id="diff" class="big">--</div>
-<div id="zone" class="signal neutral">等待信号</div>
+    <div>ETH 24h 涨跌</div>
+    <div id="eth" class="value">--</div>
 </div>
 
 <div class="card">
-<div class="title">套利建议</div>
-<div id="action" class="signal">等待数据</div>
+    <div>BTC 24h 涨跌</div>
+    <div id="btc" class="value">--</div>
 </div>
 
 <div class="card">
-<div class="title">组合PnL</div>
-<div id="pnl" class="big">0%</div>
-</div>
-
-<div class="card">
-<div class="title">持仓时间</div>
-<div id="timer" class="big">0m</div>
-</div>
-
-<div class="card">
-<div class="title">ETH/BTC差值趋势</div>
-<canvas id="chart"></canvas>
-</div>
-
+    <div>收益率差 (ETH - BTC)</div>
+    <div id="spread" class="value">--</div>
 </div>
 
 <script>
-let history=[];
-let startTime=null;
 
-const chart=new Chart(document.getElementById('chart'),{
-type:'line',
-data:{labels:[],datasets:[{label:'Diff %',data:[]}]},
-options:{responsive:true}
-});
+async function checkSpread(){
 
-async function fetchData(){
-try{
-let btc=await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT").then(r=>r.json());
-let eth=await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=ETHUSDT").then(r=>r.json());
+    try{
 
-let btcChange=parseFloat(btc.priceChangePercent);
-let ethChange=parseFloat(eth.priceChangePercent);
+        const ethRes = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=ETHUSDT");
+        const btcRes = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT");
 
-let diff=ethChange-btcChange;
+        const ethData = await ethRes.json();
+        const btcData = await btcRes.json();
 
-updateUI(diff);
-}catch(e){}
+        const ethChange = parseFloat(ethData.priceChangePercent);
+        const btcChange = parseFloat(btcData.priceChangePercent);
+
+        const spread = ethChange - btcChange;
+
+        document.getElementById("eth").innerText = ethChange.toFixed(2) + "%";
+        document.getElementById("btc").innerText = btcChange.toFixed(2) + "%";
+
+        let spreadEl = document.getElementById("spread");
+        spreadEl.innerText = spread.toFixed(2) + "%";
+
+        if(spread >= 0){
+            spreadEl.className = "value good";
+        }else{
+            spreadEl.className = "value bad";
+        }
+
+        console.log("Spread:", spread);
+
+        // ⭐ 超过2%就发Telegram
+        if(Math.abs(spread) >= 2){
+
+            fetch(`/api/sendAlert?text=ETH/BTC 24h差 ${spread.toFixed(2)}% | ETH:${ethChange.toFixed(2)}% BTC:${btcChange.toFixed(2)}%`);
+
+        }
+
+    }catch(e){
+        console.log("Error:", e);
+    }
+
 }
 
-function updateUI(diff){
+// ⭐ 每10秒检测一次
+setInterval(checkSpread, 10000);
 
-document.getElementById("diff").innerText=diff.toFixed(2)+"%";
+// ⭐ 页面打开立刻检测一次
+checkSpread();
 
-let zone="等待信号";
-let action="观望";
-
-if(Math.abs(diff)>=2){
-zone="套利区";
-if(diff>0){
-action="做空ETH / 做多BTC";
-}else{
-action="做多ETH / 做空BTC";
-}
-
-if(!startTime) startTime=Date.now();
-
-}else{
-startTime=null;
-}
-
-document.getElementById("zone").innerText=zone;
-document.getElementById("action").innerText=action;
-
-if(startTime){
-let mins=Math.floor((Date.now()-startTime)/60000);
-document.getElementById("timer").innerText=mins+"m";
-}
-
-history.push(diff);
-if(history.length>40) history.shift();
-
-chart.data.labels=history.map((_,i)=>i);
-chart.data.datasets[0].data=history;
-chart.update();
-}
-
-setInterval(fetchData,5000);
-fetchData();
 </script>
 
 </body>
