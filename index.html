@@ -1,115 +1,95 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETH/BTC 套利监控</title>
-
+<title>ETH BTC Spread Monitor</title>
 <style>
 body{
-    font-family: Arial, sans-serif;
-    background:#0b0f1a;
-    color:#fff;
-    text-align:center;
-    padding:30px;
+  font-family: Arial;
+  background:#0b0f14;
+  color:#00ffa3;
+  text-align:center;
+  padding-top:40px;
 }
-
-.card{
-    background:#151a2b;
-    border-radius:12px;
-    padding:20px;
-    margin:15px auto;
-    width:320px;
-    box-shadow:0 0 20px rgba(0,0,0,0.4);
+.box{
+  font-size:28px;
+  margin:20px;
 }
-
-.value{
-    font-size:28px;
-    font-weight:bold;
-    margin-top:10px;
-}
-
-.good{ color:#00ff9d; }
-.bad{ color:#ff4d6d; }
-
-h1{
-    margin-bottom:20px;
+.small{
+  font-size:18px;
+  color:#aaa;
 }
 </style>
-
 </head>
+
 <body>
 
-<h1>ETH / BTC 套利监控</h1>
+<h1>ETH / BTC 24H Spread</h1>
 
-<div class="card">
-    <div>ETH 24h 涨跌</div>
-    <div id="eth" class="value">--</div>
-</div>
-
-<div class="card">
-    <div>BTC 24h 涨跌</div>
-    <div id="btc" class="value">--</div>
-</div>
-
-<div class="card">
-    <div>收益率差 (ETH - BTC)</div>
-    <div id="spread" class="value">--</div>
-</div>
+<div class="box">BTC 24H: <span id="btc">--</span>%</div>
+<div class="box">ETH 24H: <span id="eth">--</span>%</div>
+<div class="box">Spread: <span id="spread">--</span>%</div>
+<div class="small">Alert Threshold: 1.8%</div>
 
 <script>
 
-async function checkSpread(){
+const ALERT_THRESHOLD = 1.8;
+let alertSent = false;
 
-    try{
+async function getData(){
 
-        const ethRes = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=ETHUSDT");
-        const btcRes = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT");
+ try{
 
-        const ethData = await ethRes.json();
-        const btcData = await btcRes.json();
+   const btcRes = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT");
+   const btcData = await btcRes.json();
+   const btc = parseFloat(btcData.priceChangePercent);
 
-        const ethChange = parseFloat(ethData.priceChangePercent);
-        const btcChange = parseFloat(btcData.priceChangePercent);
+   const ethRes = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=ETHUSDT");
+   const ethData = await ethRes.json();
+   const eth = parseFloat(ethData.priceChangePercent);
 
-        const spread = ethChange - btcChange;
+   const spread = eth - btc;
 
-        document.getElementById("eth").innerText = ethChange.toFixed(2) + "%";
-        document.getElementById("btc").innerText = btcChange.toFixed(2) + "%";
+   document.getElementById("btc").innerText = btc.toFixed(2);
+   document.getElementById("eth").innerText = eth.toFixed(2);
+   document.getElementById("spread").innerText = spread.toFixed(2);
 
-        let spreadEl = document.getElementById("spread");
-        spreadEl.innerText = spread.toFixed(2) + "%";
+   checkAlert(spread);
 
-        if(spread >= 0){
-            spreadEl.className = "value good";
-        }else{
-            spreadEl.className = "value bad";
-        }
-
-        console.log("Spread:", spread);
-
-        // ⭐ 超过2%就发Telegram
-        if(Math.abs(spread) >= 1.1){
-
-            fetch(`/api/sendAlert?text=ETH/BTC 24h差 ${spread.toFixed(2)}% | ETH:${ethChange.toFixed(2)}% BTC:${btcChange.toFixed(2)}%`);
-
-        }
-
-    }catch(e){
-        console.log("Error:", e);
-    }
+ }catch(e){
+   console.log(e);
+ }
 
 }
 
-// ⭐ 每10秒检测一次
-setInterval(checkSpread, 10000);
+function checkAlert(spread){
 
-// ⭐ 页面打开立刻检测一次
-checkSpread();
+ const absSpread = Math.abs(spread);
+
+ // ⭐ 突破触发
+ if(absSpread >= ALERT_THRESHOLD && !alertSent){
+
+   fetch(`/api/sendAlert?text=🚨 ETH-BTC Spread 突破 ${ALERT_THRESHOLD}% 当前 ${spread.toFixed(2)}%`);
+
+   alertSent = true;
+   console.log("Alert Sent");
+
+ }
+
+ // ⭐ 回归复位
+ if(absSpread < ALERT_THRESHOLD && alertSent){
+
+   alertSent = false;
+   console.log("Alert Reset");
+
+ }
+
+}
+
+setInterval(getData, 10000);
+getData();
 
 </script>
 
 </body>
 </html>
-
-
