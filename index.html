@@ -89,7 +89,7 @@ async function checkSpread(){
         console.log("Spread:", spread);
 
         // ⭐ 超过2%就发Telegram
-        if(Math.abs(spread) >= 1.5){
+        if(Math.abs(spread) >= 1.1){
 
             fetch(`/api/sendAlert?text=ETH/BTC 24h差 ${spread.toFixed(2)}% | ETH:${ethChange.toFixed(2)}% BTC:${btcChange.toFixed(2)}%`);
 
@@ -111,4 +111,5 @@ checkSpread();
 
 </body>
 </html>
+
 
