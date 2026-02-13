@@ -1,160 +1,140 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>ETH BTC 收益率差监控</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ETH BTC 多时间段 Spread（5分钟K线版）</title>
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0b0f14;
-      color: #e0e0e0;
-      margin: 0;
-      padding: 16px;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+    body{
+      font-family: Arial;
+      background:#0b0f14;
+      color:#00ffa3;
+      text-align:center;
+      padding:20px 10px;
+      margin:0;
     }
-    h1 {
-      font-size: 1.6rem;
-      margin: 16px 0 8px;
-      color: #00d1ff;
+    h1{font-size:1.8rem;margin:10px 0 20px;}
+    .box{
+      background:rgba(0,255,163,0.08);
+      border-radius:12px;
+      padding:16px;
+      margin:16px auto;
+      max-width:400px;
+      font-size:1.5rem;
     }
-    .last-update {
-      font-size: 0.85rem;
-      color: #888;
-      margin-bottom: 16px;
-    }
-    table {
-      width: 100%;
-      max-width: 420px;
-      border-collapse: collapse;
-      background: #11161f;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    }
-    th, td {
-      padding: 12px 10px;
-      text-align: center;
-      border-bottom: 1px solid #1e2530;
-    }
-    th {
-      background: #1a2230;
-      font-weight: 600;
-      color: #a0d0ff;
-    }
-    .positive { color: #00ff9d; }
-    .negative { color: #ff4d6a; }
-    .neutral  { color: #e0e0e0; }
-    .loading { color: #888; font-style: italic; }
-    @media (max-width: 500px) {
-      table { font-size: 0.92rem; }
-      th, td { padding: 10px 6px; }
-    }
+    .label{color:#aaa;font-size:1rem;margin-bottom:6px;display:block;}
+    .value{font-size:2rem;font-weight:bold;}
+    .positive{color:#00ff9d;}
+    .negative{color:#ff4d6a;}
+    .small{font-size:0.9rem;color:#888;margin:20px 0;}
   </style>
 </head>
 <body>
 
-  <h1>ETH vs BTC 收益率差</h1>
-  <div class="last-update">加载中...</div>
+<h1>ETH / BTC 多时间段 Spread</h1>
 
-  <table>
-    <thead>
-      <tr>
-        <th>时间段</th>
-        <th>ETH 涨幅</th>
-        <th>BTC 涨幅</th>
-        <th>差值 (ETH-BTC)</th>
-      </tr>
-    </thead>
-    <tbody id="data-body">
-      <!-- 数据将动态插入这里 -->
-    </tbody>
-  </table>
+<div id="data-container">
+  <!-- 数据会在这里动态生成 -->
+</div>
 
-  <script>
-    const timeframes = [
-      { hours: 4,  label: "4小时" },
-      { hours: 12, label: "12小时" },
-      { hours: 24, label: "24小时" }
-    ];
+<div class="small">
+  数据来源：Binance 5分钟K线<br>
+  每 5 分钟更新一次（与K线同步）
+</div>
 
-    async function fetchPrices(coin) {
-      const url = `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=2&interval=minute&precision=4`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`API 请求失败: ${res.status}`);
-      const data = await res.json();
-      return data.prices; // [[timestamp, price], ...]
-    }
+<script>
+  const ALERT_THRESHOLD = 1.8;   // 24h spread 警报阈值
+  let alertSent = false;
 
-    function findClosestPrice(prices, targetTimeMs) {
-      return prices.reduce((prev, curr) => 
-        Math.abs(curr[0] - targetTimeMs) < Math.abs(prev[0] - targetTimeMs) ? curr : prev
-      )[1];
-    }
+  const timeframes = [
+    { key: '4h',  hours: 4,  label: '4小时' },
+    { key: '12h', hours: 12, label: '12小时' },
+    { key: '24h', hours: 24, label: '24小时' }
+  ];
 
-    function calculateReturn(current, past) {
-      if (!past || past === 0) return 0;
-      return ((current - past) / past) * 100;
-    }
+  // 拉取 5 分钟 K 线（最多 500 根 ≈ 41.67 小时，足够覆盖 24h+）
+  async function fetchKlines(symbol) {
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=5m&limit=500`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Binance API 错误');
+    return await res.json(); // [[openTime, open, high, low, close, ...], ...]
+  }
 
-    async function updateData() {
-      const updateEl = document.querySelector('.last-update');
-      const tbody = document.getElementById('data-body');
-      updateEl.textContent = "加载中...";
-      tbody.innerHTML = '<tr><td colspan="4" class="loading">正在获取最新价格...</td></tr>';
+  function calcChange(klines, hours) {
+    if (klines.length < 2) return 0;
+    const now = Date.now();
+    const targetTime = now - hours * 3600000;
 
-      try {
-        const [ethPrices, btcPrices] = await Promise.all([
-          fetchPrices('ethereum'),
-          fetchPrices('bitcoin')
-        ]);
+    const latestClose = parseFloat(klines[klines.length-1][4]); // 当前收盘价
 
-        const now = Date.now();
-        const currentEth = ethPrices[ethPrices.length - 1][1];
-        const currentBtc = btcPrices[btcPrices.length - 1][1];
-
-        let rows = '';
-
-        timeframes.forEach(tf => {
-          const pastMs = now - tf.hours * 3600 * 1000;
-          const pastEth = findClosestPrice(ethPrices, pastMs);
-          const pastBtc = findClosestPrice(btcPrices, pastMs);
-
-          const ethRet = calculateReturn(currentEth, pastEth);
-          const btcRet = calculateReturn(currentBtc, pastBtc);
-          const spread = ethRet - btcRet;
-
-          const signClass = spread > 0.3 ? 'positive' : spread < -0.3 ? 'negative' : 'neutral';
-
-          rows += `
-            <tr>
-              <td>${tf.label}</td>
-              <td>${ethRet.toFixed(2)}%</td>
-              <td>${btcRet.toFixed(2)}%</td>
-              <td class="${signClass}"><strong>${spread.toFixed(2)}%</strong></td>
-            </tr>
-          `;
-        });
-
-        tbody.innerHTML = rows;
-        updateEl.textContent = `最后更新：${new Date().toLocaleString('zh-CN', {hour12: false})}`;
-
-      } catch (err) {
-        console.error(err);
-        updateEl.textContent = "数据加载失败，请稍后刷新";
-        tbody.innerHTML = '<tr><td colspan="4" style="color:#ff4d6a;">网络或API错误</td></tr>';
+    // 找到离目标时间最近的K线（用开盘时间）
+    let closest = klines[0];
+    for (const k of klines) {
+      if (Math.abs(k[0] - targetTime) < Math.abs(closest[0] - targetTime)) {
+        closest = k;
       }
     }
+    const pastOpen = parseFloat(closest[1]);
+    if (pastOpen === 0) return 0;
+    return ((latestClose - pastOpen) / pastOpen) * 100;
+  }
 
-    // 初次加载
-    updateData();
+  async function update() {
+    try {
+      const [btcKlines, ethKlines] = await Promise.all([
+        fetchKlines('BTCUSDT'),
+        fetchKlines('ETHUSDT')
+      ]);
 
-    // 每5分钟刷新一次
-    setInterval(updateData, 5 * 60 * 1000);
-  </script>
+      let html = '';
+      let spread24h = 0;
+
+      timeframes.forEach(tf => {
+        const btcChg = calcChange(btcKlines, tf.hours);
+        const ethChg = calcChange(ethKlines, tf.hours);
+        const spread = ethChg - btcChg;
+
+        if (tf.key === '24h') spread24h = spread;
+
+        const spreadClass = spread >= 0 ? 'positive' : 'negative';
+
+        html += `
+          <div class="box">
+            <span class="label">${tf.label} Spread</span>
+            <div>BTC <span class="value">${btcChg.toFixed(2)}%</span></div>
+            <div>ETH <span class="value">${ethChg.toFixed(2)}%</span></div>
+            <div>差值 <span class="value ${spreadClass}">${spread.toFixed(2)}%</span></div>
+          </div>`;
+      });
+
+      document.getElementById('data-container').innerHTML = html;
+
+      // 只对 24h 做警报
+      checkAlert(spread24h);
+
+    } catch (e) {
+      console.error(e);
+      document.getElementById('data-container').innerHTML = 
+        '<div style="color:#ff4d6a;padding:20px;">加载失败，5秒后重试...</div>';
+    }
+  }
+
+  function checkAlert(spread24h) {
+    const abs = Math.abs(spread24h);
+    if (abs >= ALERT_THRESHOLD && !alertSent) {
+      fetch(`/api/sendAlert?text=🚨 ETH-BTC 24h Spread 突破 ${ALERT_THRESHOLD}%！当前 ${spread24h.toFixed(2)}%`)
+        .then(() => alertSent = true);
+    }
+    if (abs < ALERT_THRESHOLD && alertSent) {
+      alertSent = false;
+    }
+  }
+
+  // 启动：立即执行一次，然后每 5 分钟（300000ms）更新一次
+  update();
+  setInterval(update, 5 * 60 * 1000);
+
+</script>
 
 </body>
 </html>
